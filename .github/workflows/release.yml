@@ -1,0 +1,42 @@
+name: Release
+
+# Builds each platform's installer on its native OS and attaches the
+# artifacts to the GitHub release for the pushed tag.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build installer (x64)
+        run: npx electron-builder --x64 --publish never
+
+      - name: Build installer (arm64, macOS only)
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder --arm64 --publish never
+
+      - name: Attach artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.exe
