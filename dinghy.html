@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Frigate Config Builder</title>
+<title>Dinghy</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -428,7 +428,11 @@
 <body>
 
 <header>
-  <h1>🎥 Frigate Config Builder</h1>
+  <h1 style="display:flex;align-items:center;gap:0.5rem">
+    <img src="dinghy.png" alt="" style="height:28px;border-radius:6px" onerror="this.style.display='none'">
+    Dinghy
+    <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">gets you into Frigate</span>
+  </h1>
   <div class="tabs">
     <button class="tab active" onclick="UI.switchTab('editor', this)">Mask / Zone Editor</button>
     <button class="tab" onclick="UI.switchTab('cameras', this)">Camera Builder</button>
@@ -449,6 +453,7 @@
           <p class="hint">Use Frigate debug view screenshot</p>
         </div>
         <input type="file" id="fileInput" accept="image/*" onchange="UI.handleFile(this.files)">
+        <button class="btn secondary btn-sm" id="grabFrameBtn" style="display:none;width:100%;margin-bottom:0.75rem" onclick="UI.grabFrame()">📷 Grab Frame from RTSP</button>
 
         <label>Drawing Mode</label>
         <select id="drawMode" onchange="UI.changeMode()">
@@ -1218,6 +1223,14 @@ const View = {
     this.renderItemList(ws);
     this.renderCamList(ws);
     this.renderYaml(ws);
+    this.renderNative(ws);
+  },
+
+  // spec 09: native-only affordances; hidden entirely in plain browsers
+  renderNative(ws) {
+    const btn = document.getElementById('grabFrameBtn');
+    const cam = ws.cameras.find(c => c.id === ws.activeCameraId);
+    btn.style.display = (window.dinghyNative && cam && /^rtsps?:\/\//i.test(cam.input)) ? 'block' : 'none';
   },
 
   // spec 08: camera tab strip — renders purely from state
@@ -1509,6 +1522,37 @@ const UI = {
     this.importYaml();
   },
 
+  // ---- spec 09: native (Electron) actions — every entry guarded, absent in browsers ----
+  async grabFrame() {
+    if (!window.dinghyNative) return;
+    const cam = Store.state.cameras.find(c => c.id === Store.state.activeCameraId);
+    if (!cam) return;
+    const btn = document.getElementById('grabFrameBtn');
+    btn.disabled = true;
+    btn.textContent = 'Grabbing…';
+    const res = await dinghyNative.grabFrame(cam.input);
+    btn.disabled = false;
+    btn.textContent = '📷 Grab Frame from RTSP';
+    if (res.error) { Toast.show(res.error); return; }
+    const prev = Store.snapshotImage();
+    Store.setImage(res.dataUrl, { filename: cam.name + ' (rtsp grab)' });
+    if (prev) Toast.show('Image replaced', () => Store.restoreImage(prev));
+  },
+  async openConfigNative() {
+    const res = await dinghyNative.openConfig();
+    if (!res) return; // dialog canceled
+    if (res.error) { Toast.show(res.error); return; }
+    document.getElementById('importText').value = res.content;
+    this.importYaml();
+  },
+  async saveConfigNative(as) {
+    const yaml = Yaml.fullConfig(Store.state);
+    if (!yaml) { Toast.show('Add at least one camera before saving a config.'); return; }
+    const res = await dinghyNative.saveConfig(yaml, { as });
+    if (res.error) Toast.show(res.error);
+    else if (!res.canceled) Toast.show('Saved to ' + res.path);
+  },
+
   deleteItem(id) {
     const snap = Store.deletePolygon(id);
     if (snap) Toast.show(`Deleted “${snap.polygon.name}”`, () => Store.restorePolygon(snap.polygon, snap.index));
@@ -1785,6 +1829,16 @@ document.getElementById('shapeName').addEventListener('input', e => {
     View.clearFieldError('nameError');
   }
 });
+
+// ---- spec 09: Electron menu wiring (no-op in plain browsers) ----
+if (window.dinghyNative) {
+  dinghyNative.onMenu(action => {
+    if (action === 'open-config') UI.openConfigNative();
+    else if (action === 'save-config') UI.saveConfigNative(false);
+    else if (action === 'save-config-as') UI.saveConfigNative(true);
+    else if (action === 'export-yaml') UI.downloadYaml();
+  });
+}
 
 // ==================== INIT ====================
 View.init();

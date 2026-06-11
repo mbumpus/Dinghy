@@ -1,0 +1,18 @@
+appId: com.aicabinetmethod.dinghy
+productName: Dinghy
+directories:
+  buildResources: build
+  output: dist
+files:
+  - dinghy.html
+  - dinghy.png
+  - src/**
+mac:
+  category: public.app-category.utilities
+  target: dmg
+win:
+  target: nsis
+linux:
+  target: AppImage
+  icon: build/icon.png
+  category: Utility

@@ -1,0 +1,17 @@
+{
+  "name": "dinghy",
+  "version": "0.3.0",
+  "description": "Dinghy — gets you into Frigate. Draw zones and masks visually, export valid Frigate YAML.",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "author": "AI Cabinet Method LLC",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

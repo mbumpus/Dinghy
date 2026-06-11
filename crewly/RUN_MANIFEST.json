@@ -1,11 +1,18 @@
 {
-  "project": "frigate-polygon-helper",
-  "milestone": "v0.2",
+  "project": "dinghy (formerly frigate-polygon-helper)",
+  "milestone": "v0.2 COMPLETE; v0.3 spec 09 implemented, open on Human T5 (RTSP grab + packaging sign-off)",
   "created": "2026-06-11",
   "authority": "Morgan (morgan-local)",
   "status": "COMPLETE",
   "completed": "2026-06-11",
   "final_verdict": "APPROVED",
+  "v0_3": {
+    "spec": "crewly/specs/09-electron-dinghy.json",
+    "points": 8,
+    "status": "IMPLEMENTED_PENDING_HUMAN_T5",
+    "verdicts": { "qa": "APPROVED", "morgan_alignment": "ALIGNED" },
+    "human_t5": "Run npm start with a real RTSP camera (Grab Frame) and npm run dist on target OS"
+  },
   "handoff_gate": "Approved by human reviewer 2026-06-11. All Morgan-recommended defaults accepted as-is.",
   "baseline_artifact": "frigate_config_builder.html",
   "architecture": "crewly/ARCHITECTURE.md",
