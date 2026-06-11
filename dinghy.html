@@ -384,7 +384,8 @@
     position: fixed;
     bottom: 1.25rem;
     left: 50%;
-    transform: translateX(-50%) translateY(120%);
+    visibility: hidden;
+    transform: translateX(-50%) translateY(calc(100% + 1.5rem));
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -397,7 +398,7 @@
     transition: transform 0.18s ease;
     z-index: 100;
   }
-  #toast.visible { transform: translateX(-50%) translateY(0); }
+  #toast.visible { visibility: visible; transform: translateX(-50%) translateY(0); }
   #toast button {
     background: none;
     border: none;
