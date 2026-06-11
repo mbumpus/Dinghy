@@ -34,7 +34,7 @@ npm run dist       # package installers (dmg / AppImage / exe via electron-build
 ### Desktop extras (v0.3+)
 - **File → Open Config…** loads a real `config.yml` through the importer and remembers the path
 - **File → Save Config / Save Config As…** writes the generated full config to disk (v0.3 writes Dinghy's generated config; merging into untouched keys of an existing file is planned)
-- **Grab Frame** spawns system `ffmpeg` for a single RTSP frame (15s timeout, credentials never logged); a clear error appears if ffmpeg is missing
+- **Grab Frame** spawns system `ffmpeg` for a single RTSP frame (15s timeout, credentials never logged); on startup the app shows a ✓/⚠ FFmpeg status with the install command for your OS (`winget install Gyan.FFmpeg` / `brew install ffmpeg` / `apt install ffmpeg`)
 - **Discover Cameras (ONVIF)** — WS-Discovery multicast probe finds cameras on your LAN in under 5 seconds; enter that camera's credentials to pull its real stream profiles, then one click fills the Camera Builder with the exact RTSP URL, resolution, and FPS. Discovery only (no PTZ or device config); non-ONVIF cameras use manual entry. macOS may ask for Local Network permission on first use.
 
 ### Persistence
@@ -45,7 +45,7 @@ npm run dist       # package installers (dmg / AppImage / exe via electron-build
 Built to be audited, since it configures a security system:
 - Zero network requests at runtime (web and desktop) — verify in DevTools
 - Renderer is one HTML file; the only third-party code in it is [js-yaml 4.1.0](https://github.com/nodeca/js-yaml) (MIT), vendored inline, used only to *parse* imported YAML
-- Electron shell: `contextIsolation` on, `nodeIntegration` off, sandboxed renderer, strict CSP (no remote scripts, no network); the entire native surface is six functions in [`src/preload.js`](src/preload.js)
+- Electron shell: `contextIsolation` on, `nodeIntegration` off, sandboxed renderer, strict CSP (no remote scripts, no network); the entire native surface is seven functions in [`src/preload.js`](src/preload.js)
 - RTSP URLs are passed as process arguments (never shell-interpolated) and stripped of credentials in any error output
 
 ## Coordinate model

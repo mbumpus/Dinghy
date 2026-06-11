@@ -456,6 +456,7 @@
         </div>
         <input type="file" id="fileInput" accept="image/*" onchange="UI.handleFile(this.files)">
         <button class="btn secondary btn-sm" id="grabFrameBtn" style="display:none;width:100%;margin-bottom:0.75rem" onclick="UI.grabFrame()">📷 Grab Frame from RTSP</button>
+        <div id="ffmpegStatus" style="display:none;font-size:0.75rem;line-height:1.5;margin:-0.35rem 0 0.75rem"></div>
 
         <label>Drawing Mode</label>
         <select id="drawMode" onchange="UI.changeMode()">
@@ -2000,6 +2001,24 @@ if (window.dinghyNative) {
     else if (action === 'export-yaml') UI.downloadYaml();
   });
   document.getElementById('onvifWrap').style.display = 'block';
+
+  // startup ffmpeg check — saves the "why doesn't Grab Frame work" support question
+  (async () => {
+    const res = await dinghyNative.checkFfmpeg();
+    const el = document.getElementById('ffmpegStatus');
+    if (res.found) {
+      el.innerHTML = `<span style="color:var(--success)">✓ FFmpeg detected${res.version ? ' (' + esc(res.version) + ')' : ''}</span>`;
+    } else {
+      const hints = {
+        win32: 'winget install Gyan.FFmpeg',
+        darwin: 'brew install ffmpeg',
+        linux: 'sudo apt install ffmpeg'
+      };
+      el.innerHTML = `<span style="color:var(--warning)">⚠ FFmpeg not found — RTSP frame grabs unavailable.<br>` +
+        `Install with: <code>${esc(hints[res.platform] || 'see ffmpeg.org/download')}</code></span>`;
+    }
+    el.style.display = 'block';
+  })();
 }
 
 // ==================== INIT ====================

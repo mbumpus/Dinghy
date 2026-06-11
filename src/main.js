@@ -135,6 +135,26 @@ ipcMain.handle('frame:grab', (_e, url) => new Promise(resolve => {
   });
 }));
 
+// ---- IPC: ffmpeg availability check (startup status indicator) ----
+ipcMain.handle('ffmpeg:check', () => new Promise(resolve => {
+  let out = '';
+  let ff;
+  try {
+    ff = spawn('ffmpeg', ['-version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    resolve({ found: false, platform: process.platform });
+    return;
+  }
+  ff.stdout.on('data', c => { out += c; });
+  ff.on('error', () => resolve({ found: false, platform: process.platform }));
+  ff.on('close', code => {
+    const m = /ffmpeg version (\S+)/.exec(out);
+    resolve(code === 0
+      ? { found: true, version: m ? m[1] : null, platform: process.platform }
+      : { found: false, platform: process.platform });
+  });
+}));
+
 // ---- IPC: ONVIF discovery (spec 10) — main process only, discovery scope only ----
 function scopeValue(scopes, key) {
   const m = new RegExp('onvif://www\\.onvif\\.org/' + key + '/([^\\s]+)').exec(scopes || '');
