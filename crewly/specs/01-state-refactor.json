@@ -1,0 +1,91 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-state-refactor",
+  "build_order": 1,
+  "story": {
+    "title": "Refactor v0.1 globals into Store/View/Yaml/Validate/Persist/Platform namespaces with normalized-canonical coordinates",
+    "as_a": "DevCrew engineer building every subsequent v0.2 feature",
+    "i_want": "a single workspace state object mutated only through Store actions, with normalized coordinates as the source of truth and all I/O behind a Platform adapter",
+    "so_that": "point editing, YAML import, persistence, and multi-camera can each be built without touching each other's code, and the Electron v0.3 port only replaces Platform"
+  },
+  "acceptance_criteria": [
+    "Given the refactored app, when a user performs every v0.1 workflow (upload image, draw zone/motion mask/object mask, close, name, undo, clear, delete item, delete all, copy YAML, download YAML, add/delete camera, camera YAML), then behavior and YAML output are byte-identical to v0.1 except documented fixes",
+    "Given any polygon, when the canvas is re-rendered at a different display scale or a new image of different resolution is loaded, then pixel positions are derived from normalized x,y (3-decimal) and the emitted YAML coordinates do not change",
+    "Given a UI event handler in the script, when it needs to change state, then it calls a Store action (e.g., Store.addPoint, Store.closePolygon, Store.deletePolygon, Store.addCamera) and never mutates workspace fields or calls draw()/generateYaml() directly — rendering and YAML regeneration occur only via Store.subscribe",
+    "Given v0.1's item shape ({mode:'object_mask',...}), when migrateV1(items, cameras) runs, then it returns a schemaVersion:2 workspace with type:'object_filter_mask' naming, generated polygon ids, and polygons assigned to the 'default' pseudo-camera",
+    "Given the refactored file, when opened from file:// with network disabled, then no console errors occur and no network requests are made"
+  ],
+  "constraints": [
+    "Single HTML file preserved; no build step; no framework; no canvas library",
+    "Namespaces are plain JS objects in labeled script sections, not ES modules",
+    "Normalized coordinates (0–1, rounded to 3 decimals at YAML-emit time, full precision in state) are canonical; px/py never stored on points",
+    "Platform = { readImageFile(file), copyText(text), downloadFile(name, text) } is the only place touching FileReader, clipboard, or Blob/anchor downloads",
+    "Replace deprecated document.execCommand('copy') with navigator.clipboard.writeText inside Platform.copyText with execCommand fallback for file:// contexts",
+    "switchTab must take the clicked element explicitly, not read global event"
+  ],
+  "edge_cases": [
+    "YAML copy invoked before any polygon exists — empty string, no error",
+    "Image re-uploaded with different resolution while polygons exist — polygons re-derive pixel positions from normalized coords and remain visually correct relative to frame",
+    "navigator.clipboard unavailable (insecure context/file://) — fallback path used, no thrown exception",
+    "Store.subscribe callbacks must not be able to re-enter actions infinitely — actions notify once, synchronously, after mutation completes"
+  ],
+  "dependencies": ["frigate_config_builder.html v0.1 (baseline)", "crewly/ARCHITECTURE.md locked state model"],
+  "risks": [
+    "Medium: behavior regressions during refactor — mitigated by AC1 manual parity checklist run by QA",
+    "Low: full-precision normalized storage changes 3rd-decimal rounding vs v0.1 in rare cases — acceptable, document in QA notes"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "Should the refactor land with zero visible behavior change, or bundle the obvious v0.1 paper cuts (execCommand, global event)?",
+      "options": [
+        {"label": "Bundle the paper cuts (Recommended)", "info": "Both are 5-line fixes inside layers being rewritten anyway; separate PRs cost more than the risk."},
+        {"label": "Strict zero-change refactor", "info": "Purest diff but forces touching Platform twice."}
+      ],
+      "selected": "Bundle the paper cuts (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Define workspace state object (schemaVersion 2) and Store namespace with actions: setImage, addPoint, undoPoint, clearCurrent, closePolygon, deletePolygon, clearPolygons, addCamera, deleteCamera, plus subscribe/notify", "inputs": ["ARCHITECTURE.md state model"], "outputs": ["Store section in HTML"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "Extract View namespace: render(workspace) for canvas (deriving px from normalized coords against current image dims), renderItemList, renderCamList; wire as Store subscriber", "inputs": ["T1"], "outputs": ["View section"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T3", "description": "Extract Yaml.generate(workspace) and Platform adapter (readImageFile, copyText with clipboard API + fallback, downloadFile); rewire all buttons through Store/Platform", "inputs": ["T1"], "outputs": ["Yaml + Platform sections"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T4", "description": "Write migrateV1() mapping v0.1 in-memory shapes (mode/object_mask, px-bearing points) to schemaVersion 2; fix switchTab global-event usage", "inputs": ["T1"], "outputs": ["migration function"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T5", "description": "Run v0.1 parity checklist (AC1 workflows) and air-gap check (AC5) against refactored file", "inputs": ["T2", "T3", "T4"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T2", "T3", "T4"]}
+  ],
+  "docs_md": "## State Refactor\nReorganizes the single-file app into Store/View/Yaml/Validate(empty shell)/Persist(empty shell)/Platform namespaces. Normalized coordinates become canonical; pixels are derived at render. All later v0.2 specs assume this structure. No user-visible feature changes except clipboard API modernization.",
+  "stub_suggestions": [
+    {
+      "path": "frigate_config_builder.html#Store",
+      "purpose": "Central state + pub/sub; every later spec adds actions here",
+      "snippet": "const Store = {\n  state: { schemaVersion: 2, activeCameraId: 'default', cameras: [], polygonsByCamera: { default: [] }, imagesMeta: {}, draft: { points: [], type: 'motion_mask', objectType: 'person' } },\n  _subs: [],\n  subscribe(fn) { this._subs.push(fn); },\n  _notify() { this._subs.forEach(fn => fn(this.state)); },\n  addPoint(xNorm, yNorm) { this.state.draft.points.push({ x: xNorm, y: yNorm }); this._notify(); },\n  closePolygon(name, objectType) {\n    if (this.state.draft.points.length < 3) return { ok: false, error: 'min_points' };\n    const polys = this.state.polygonsByCamera[this.state.activeCameraId];\n    polys.push({ id: 'p_' + crypto.randomUUID(), name, type: this.state.draft.type, objectType, points: this.state.draft.points, closed: true });\n    this.state.draft.points = [];\n    this._notify();\n    return { ok: true };\n  }\n};"
+    },
+    {
+      "path": "frigate_config_builder.html#Platform",
+      "purpose": "The Electron swap boundary — keep it tiny and async",
+      "snippet": "const Platform = {\n  readImageFile(file) { return new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file); }); },\n  async copyText(text) { try { await navigator.clipboard.writeText(text); } catch { const ta = Object.assign(document.createElement('textarea'), { value: text }); document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); } },\n  downloadFile(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/yaml' })); a.download = name; a.click(); }\n};"
+    }
+  ],
+  "metrics": [
+    "100% of AC1 parity checklist items pass (QA-run, zero regressions)",
+    "0 direct mutations of workspace state outside Store (verified by grep for 'state.' writes outside the Store section)",
+    "0 network requests and 0 console errors when opened from file:// (DevTools network/console audit)"
+  ],
+  "decision_log": {
+    "rationale": "Every v0.2 feature reads or writes shared state; without a single mutation path, point-editing, persistence, import, and multi-camera would each invent their own state handling and conflict. Normalized-canonical coordinates fix the v0.1 frozen-at-click-time class of bugs before three features (drag, import, multi-camera) would each trip over it.",
+    "alternatives_considered": [
+      "Rejected: skip refactor, build features on v0.1 globals — each feature's diff grows and multi-camera becomes a rewrite anyway",
+      "Rejected: ES modules + multiple files — violates single-file constraint",
+      "Rejected: introduce a microframework (Preact/petite-vue) — violates no-framework constraint, overkill for this UI"
+    ],
+    "tradeoffs": ["Refactor delivers zero user-visible value on its own; one sprint slot spent on foundation", "Plain-object namespaces rely on convention, not enforcement"],
+    "confidence": "High",
+    "confidence_rationale": "v0.1 is 808 lines and fully understood; the target structure is dictated by the locked architecture; parity is mechanically checkable."
+  },
+  "defaults_applied": [
+    "Assuming vanilla JavaScript, not TypeScript, per master spec v0.1–v0.2 stack",
+    "Assuming 'default' pseudo-camera holds polygons until multi-camera (spec 08) introduces real camera binding",
+    "Assuming crypto.randomUUID() is available (all evergreen browsers; file:// counts as secure context for it)"
+  ],
+  "suggested_story_points": 5,
+  "suggested_due_date": "2026-06-16"
+}

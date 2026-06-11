@@ -1,0 +1,78 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-clipboard-paste",
+  "build_order": 3,
+  "story": {
+    "title": "Paste camera frame image directly from clipboard (Ctrl/Cmd+V)",
+    "as_a": "Frigate user who just screenshotted the debug view",
+    "i_want": "to press Ctrl+V anywhere in the app and have the screenshot load as the canvas background",
+    "so_that": "I skip the save-to-disk and file-picker round trip entirely"
+  },
+  "acceptance_criteria": [
+    "Given an image on the OS clipboard, when the user presses Ctrl/Cmd+V with the Editor tab active, then the image loads into the canvas through the same Store.setImage path as file upload, with identical dimension capture and normalization",
+    "Given clipboard content that is not an image (text, files), when paste fires, then the app does nothing and no error or warning is shown",
+    "Given focus inside a text input (Name, camera form fields), when the user pastes, then normal text paste occurs and the image-paste handler does not intercept",
+    "Given an image already loaded with polygons drawn, when a new image is pasted, then polygons are preserved (normalized coords re-derive against new dims) and a toast notes the image was replaced with Undo restoring the previous image"
+  ],
+  "constraints": [
+    "Listen for the 'paste' event on document; extract image via e.clipboardData.items (type startsWith 'image/'); no async Clipboard.read() permission prompts",
+    "Image decode goes through Platform.readImageFile(blob) — same adapter as upload, no second decode path",
+    "Drop-zone hint text updated to mention paste ('Drop, click, or Ctrl+V')",
+    "Handler active only while the Editor panel is visible"
+  ],
+  "edge_cases": [
+    "Clipboard contains both text and image (e.g., copy from a web page) — image item wins",
+    "Very large screenshot (e.g., 4K, >20MB decoded) — loads normally; canvas already sized to natural dimensions",
+    "Paste before any prior image exists — behaves exactly like first upload, placeholder hides",
+    "Animated or unsupported MIME in items list — first item whose type matches image/png|jpeg|webp is used; others ignored"
+  ],
+  "dependencies": ["01-state-refactor.json (Platform adapter, Store.setImage)", "02-validation-warnings.json (toast for image-replaced undo)"],
+  "risks": [
+    "Low: browser clipboard quirks on Linux/Wayland — paste event path (not async API) is the most compatible route"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "Should pasting while polygons exist warn before replacing the image?",
+      "options": [
+        {"label": "Replace instantly + undo toast (Recommended)", "info": "Consistent with no-confirmation-dialogs principle; polygons survive anyway since coords are normalized."},
+        {"label": "Block with inline confirm", "info": "Safer-feeling but violates master spec UI principle #6."}
+      ],
+      "selected": "Replace instantly + undo toast (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Add document paste listener with input-focus guard and image-item extraction; route blob through Platform.readImageFile → Store.setImage", "inputs": ["Platform adapter"], "outputs": ["paste handler"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "Add image-replaced toast with undo (snapshot previous image dataURL + dims); update drop-zone hint copy", "inputs": ["T1", "Toast system"], "outputs": ["replace-undo flow"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T3", "description": "QA: paste PNG/JPG/WebP screenshots on macOS and one other OS, text-paste passthrough in inputs, replace-with-polygons scenario", "inputs": ["T2"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T2"]}
+  ],
+  "docs_md": "## Clipboard Image Paste\nScreenshot the Frigate debug view, focus the app, Ctrl/Cmd+V. The pasted image becomes the canvas background via the same pipeline as file upload. Pasting over an existing image is instant with a 5s undo. Text pastes into form fields are untouched.",
+  "stub_suggestions": [
+    {
+      "path": "frigate_config_builder.html#PasteHandler",
+      "purpose": "Single paste entry point with focus guard",
+      "snippet": "document.addEventListener('paste', async (e) => {\n  if (!document.getElementById('panel-editor').classList.contains('active')) return;\n  const tag = document.activeElement?.tagName;\n  if (tag === 'INPUT' || tag === 'TEXTAREA') return; // let text paste through\n  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));\n  if (!item) return;\n  e.preventDefault();\n  const prev = Store.snapshotImage();\n  const dataUrl = await Platform.readImageFile(item.getAsFile());\n  Store.setImage(dataUrl, { source: 'clipboard' });\n  if (prev) Toast.show('Image replaced', () => Store.restoreImage(prev));\n});"
+    }
+  ],
+  "metrics": [
+    "Paste-to-rendered latency < 500ms for a 1080p PNG screenshot",
+    "0 interference with text paste in form fields across QA matrix",
+    "100% parity of dimension/normalization metadata between paste path and upload path (same Store.setImage call site)"
+  ],
+  "decision_log": {
+    "rationale": "Paste event API chosen over async navigator.clipboard.read() because it requires no permission prompt, works on file:// origins, and fires with user intent. Routing through Platform keeps the Electron clipboard swap (v0.3) one-function.",
+    "alternatives_considered": [
+      "Rejected: navigator.clipboard.read() — permission prompts and flaky file:// support",
+      "Rejected: dedicated Paste button — extra UI for what a global shortcut does better"
+    ],
+    "tradeoffs": ["No paste support if browser blocks clipboardData on paste events (none of the evergreen targets do)"],
+    "confidence": "High",
+    "confidence_rationale": "Smallest spec in the batch; well-trodden web API; single integration point."
+  },
+  "defaults_applied": [
+    "Assuming paste applies to the Editor tab only; Camera Builder has no image surface",
+    "Assuming first matching image item wins when clipboard holds multiple representations"
+  ],
+  "suggested_story_points": 2,
+  "suggested_due_date": "2026-06-17"
+}

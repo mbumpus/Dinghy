@@ -1,0 +1,90 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-validation-warnings",
+  "build_order": 2,
+  "story": {
+    "title": "Validation rules with inline warnings and undo-toast system replacing all alert() dialogs",
+    "as_a": "Frigate user exporting YAML to a production config.yml",
+    "i_want": "bad names, short polygons, and out-of-range coordinates flagged inline before export, and destructive actions to be instant-with-undo instead of alert dialogs",
+    "so_that": "I never paste YAML that Frigate rejects at startup, and I never lose work to a misclick"
+  },
+  "acceptance_criteria": [
+    "Given a zone with an empty name or a name failing /^[a-z][a-z0-9_]*$/, when the user attempts Close, then the polygon is not committed, an inline error appears under the Name field, and no alert() fires",
+    "Given a zone name that exactly matches an existing camera name, when validated, then an inline error blocks commit with message explaining zones cannot share a camera's name",
+    "Given a polygon attempt with fewer than 3 points, when Close (button, Enter, or first-point click) is invoked, then an inline warning appears near the controls and the draft remains editable",
+    "Given any committed polygon whose normalized coordinate falls outside 0.0–1.0, when YAML regenerates, then a warning banner appears above the YAML panel naming the offending polygon (warn-only, export still allowed)",
+    "Given the user clicks delete on an item or Delete All, when the action fires, then it executes immediately and a 5-second toast with an Undo button appears; clicking Undo restores the exact prior state",
+    "Given zero validation issues, when the user works normally, then no warning UI elements are visible (no empty placeholders)"
+  ],
+  "constraints": [
+    "Zero alert()/confirm() calls remain in the file after this spec",
+    "Validation rules live in the Validate namespace as pure functions: Validate.polygonName(name, workspace), Validate.polygon(poly), Validate.workspace(ws) returning [{level:'error'|'warn', field, message}]",
+    "Errors block commit; warnings never block export (master spec: warn, don't block)",
+    "Toast/undo implemented with a snapshot of the affected slice (structuredClone), max one toast visible at a time, new toast finalizes the previous pending undo",
+    "Name regex per master spec is lowercase+underscore; Morgan extends to allow digits after first char since Frigate accepts them — flagged in defaults_applied"
+  ],
+  "edge_cases": [
+    "Auto-generated fallback names (item_1) must themselves pass the name regex",
+    "Undo clicked after the underlying camera/polygon list changed for other reasons — undo restores only the deleted entries by id, appended back at original index when possible",
+    "Motion masks and object masks have no Frigate-visible name; name rules apply as errors only to zones, as no-op for masks (name still used for list labels)",
+    "Rapid double-delete of two items — second toast supersedes first; first deletion is finalized, not lost"
+  ],
+  "dependencies": ["01-state-refactor.json (Store actions, Validate shell)"],
+  "risks": [
+    "Low: regex stricter than some working Frigate configs in the wild — warnings copy must say 'recommended by Frigate docs'",
+    "Low: toast stacking complexity — constrained to single-toast policy"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "Should zone-name validation fire on keystroke or on commit?",
+      "options": [
+        {"label": "On commit + live-clear once fixed (Recommended)", "info": "Avoids yelling at users mid-typing; error clears reactively when input becomes valid."},
+        {"label": "Live on every keystroke", "info": "Earliest feedback but flags every partially-typed name as invalid."}
+      ],
+      "selected": "On commit + live-clear once fixed (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Implement Validate namespace pure rule functions (name regex, camera-name collision, min points, coordinate range)", "inputs": ["Store state shape"], "outputs": ["Validate section"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "Build inline warning components (field-level error text, YAML-panel banner) and CSS using existing --danger/--warning tokens", "inputs": ["T1"], "outputs": ["warning UI"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T3", "description": "Build toast+undo system with state-slice snapshot; wire deletePolygon, clearPolygons, deleteCamera through it; remove all alert() calls", "inputs": ["Store actions"], "outputs": ["toast system"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T4", "description": "Wire Validate into Store.closePolygon (blocking) and Yaml regeneration (warn-only); verify all ACs incl. zero-alert grep", "inputs": ["T2", "T3"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T2", "T3"]}
+  ],
+  "docs_md": "## Validation & Warnings\nPure-function validation rules in the Validate namespace, surfaced as inline field errors (blocking) and YAML-panel banners (non-blocking). All alert()/confirm() removed; deletes become instant with a 5s undo toast, honoring master spec UI principle #6.",
+  "stub_suggestions": [
+    {
+      "path": "frigate_config_builder.html#Validate",
+      "purpose": "Pure validation rules — also reused verbatim by YAML import (spec 06)",
+      "snippet": "const Validate = {\n  NAME_RE: /^[a-z][a-z0-9_]*$/,\n  polygonName(name, ws) {\n    const issues = [];\n    if (!name) issues.push({ level: 'error', field: 'name', message: 'Zone name is required.' });\n    else if (!this.NAME_RE.test(name)) issues.push({ level: 'error', field: 'name', message: 'Use lowercase letters, digits, underscores; must start with a letter.' });\n    if (ws.cameras.some(c => c.name === name)) issues.push({ level: 'error', field: 'name', message: 'A zone cannot share a camera\\u2019s name.' });\n    return issues;\n  },\n  polygon(poly) {\n    const issues = [];\n    if (poly.points.length < 3) issues.push({ level: 'error', field: 'points', message: 'A polygon needs at least 3 points.' });\n    if (poly.points.some(p => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1)) issues.push({ level: 'warn', field: 'points', message: `\\u201c${poly.name}\\u201d has coordinates outside 0.0\\u20131.0.` });\n    return issues;\n  }\n};"
+    },
+    {
+      "path": "frigate_config_builder.html#Toast",
+      "purpose": "Single-slot undo toast",
+      "snippet": "const Toast = {\n  _timer: null, _undoFn: null,\n  show(message, undoFn) {\n    this._finalize();\n    this._undoFn = undoFn;\n    const el = document.getElementById('toast');\n    el.querySelector('.toast-msg').textContent = message;\n    el.classList.add('visible');\n    this._timer = setTimeout(() => this._finalize(), 5000);\n  },\n  undo() { if (this._undoFn) this._undoFn(); this._finalize(); },\n  _finalize() { clearTimeout(this._timer); this._undoFn = null; document.getElementById('toast')?.classList.remove('visible'); }\n};"
+    }
+  ],
+  "metrics": [
+    "0 occurrences of alert( or confirm( in the file (grep check)",
+    "100% of the 6 master-spec validation rules covered by a Validate function with a passing manual test case each",
+    "Undo restores deleted items with identical ids and order in 100% of QA undo scenarios"
+  ],
+  "decision_log": {
+    "rationale": "Validation must land before import (spec 06) and point editing (spec 05) because both reuse the same rule functions; toast/undo must land before persistence so destructive actions are safe once work is durable.",
+    "alternatives_considered": [
+      "Rejected: validate at export time only — user discovers errors after drawing 10 polygons",
+      "Rejected: confirm() dialogs for deletes — explicitly banned by master spec UI principle #6",
+      "Rejected: full undo/redo stack — out of v0.2 scope; single-slot undo covers the destructive cases"
+    ],
+    "tradeoffs": ["Single-toast policy means a fast second delete finalizes the first silently", "Name regex slightly looser than master spec's /^[a-z_]+$/ to match real Frigate behavior"],
+    "confidence": "High",
+    "confidence_rationale": "Rules are enumerated in the master spec; UI surface is small and additive."
+  },
+  "defaults_applied": [
+    "Extended master-spec name regex /^[a-z_]+$/ to /^[a-z][a-z0-9_]*$/ because Frigate accepts digits in zone names — override if strict spec-regex is required",
+    "Assuming warnings render in English only; no i18n",
+    "Assuming coordinate-range check is warn-only since the canvas cannot normally produce out-of-range points (guard per master spec)"
+  ],
+  "suggested_story_points": 3,
+  "suggested_due_date": "2026-06-17"
+}

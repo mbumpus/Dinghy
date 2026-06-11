@@ -1,0 +1,36 @@
+{
+  "project": "frigate-polygon-helper",
+  "milestone": "v0.2",
+  "created": "2026-06-11",
+  "authority": "Morgan (morgan-local)",
+  "status": "COMPLETE",
+  "completed": "2026-06-11",
+  "final_verdict": "APPROVED",
+  "handoff_gate": "Approved by human reviewer 2026-06-11. All Morgan-recommended defaults accepted as-is.",
+  "baseline_artifact": "frigate_config_builder.html",
+  "architecture": "crewly/ARCHITECTURE.md",
+  "execution_order": [
+    {"order": 1, "spec": "crewly/specs/01-state-refactor.json", "points": 5, "blocks": ["02","03","04","05","06","07","08"]},
+    {"order": 2, "spec": "crewly/specs/02-validation-warnings.json", "points": 3, "blocks": ["04","05","06","07","08"]},
+    {"order": 3, "spec": "crewly/specs/03-clipboard-paste.json", "points": 2, "parallelizable_with": ["04","05"]},
+    {"order": 4, "spec": "crewly/specs/04-localstorage-persistence.json", "points": 3, "blocks": ["08"]},
+    {"order": 5, "spec": "crewly/specs/05-point-editing.json", "points": 5, "parallelizable_with": ["03","04"]},
+    {"order": 6, "spec": "crewly/specs/06-yaml-import.json", "points": 5, "blocks": ["08"]},
+    {"order": 7, "spec": "crewly/specs/07-object-filter-mask-full.json", "points": 2, "parallelizable_with": ["06"]},
+    {"order": 8, "spec": "crewly/specs/08-multi-camera-workspace.json", "points": 8, "blocks": []}
+  ],
+  "total_points": 33,
+  "morgan_verified": false,
+  "features": {
+    "traceability": true,
+    "status_updates": false,
+    "alignment_enforcement": true
+  },
+  "qa_policy": "Each spec's QA tasks run before the next dependent spec starts. Morgan alignment validation (trace.jsonl) after specs 01, 06, and 08.",
+  "decisions_requiring_human_signoff": [
+    "D1: vendor minified js-yaml (~40KB) inline for import parsing",
+    "Name regex relaxed to /^[a-z][a-z0-9_]*$/ (master spec said /^[a-z_]+$/)",
+    "schemaVersion 2 (spec 01) then 3 (spec 08) with migrate-or-discard policy",
+    "All open_questions across specs have Morgan-recommended selections pre-applied; review and override as needed"
+  ]
+}

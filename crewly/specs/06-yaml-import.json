@@ -1,0 +1,91 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-yaml-import",
+  "build_order": 6,
+  "story": {
+    "title": "Import existing Frigate config YAML (paste or file) and redraw zones/masks on the canvas",
+    "as_a": "Frigate user with an existing hand-written config.yml",
+    "i_want": "to paste my config or a camera snippet and see my zones and masks drawn over my camera frame",
+    "so_that": "I can visually verify and refine polygons I originally calculated by hand, without retyping coordinates"
+  },
+  "acceptance_criteria": [
+    "Given a full Frigate config.yml pasted into the import panel, when Import is clicked, then all zones (cameras.<cam>.zones.<name>.coordinates), motion masks (cameras.<cam>.motion.mask and top-level motion.mask), and object filter masks (objects.filters.<type>.mask at either level) are extracted and rendered as closed polygons with correct names, types, and object types",
+    "Given a bare snippet (zones:/motion: at top level, as this app exports), when imported, then polygons import identically to the full-config case",
+    "Given coordinates in normalized form ('0.448,0.859,...'), when imported, then points map 1:1 to normalized state; given legacy pixel-form coordinates (values > 1, e.g. '860,173,...'), when imported with an image loaded, then values are divided by image dimensions and a banner notes the pixel→normalized conversion",
+    "Given a config containing multiple cameras, when imported before multi-camera (spec 08) ships, then a camera picker lists detected camera names and the user imports one camera's polygons into the workspace",
+    "Given invalid YAML or YAML with no recognizable zones/masks, when Import is clicked, then an inline error states what was looked for and nothing in the workspace changes (import is all-or-nothing per attempt)",
+    "Given imported polygons, when the user edits, deletes, or exports them, then they behave identically to hand-drawn polygons (ids assigned, validation applied with warn-only for non-conforming legacy names)"
+  ],
+  "constraints": [
+    "Parse with js-yaml, vendored minified inside the HTML file under a clearly-commented section with version and source URL (locked decision D1); YAML generation remains hand-rolled",
+    "Read-only import per master spec: no round-trip writing back to original file structure; imported data becomes ordinary workspace polygons",
+    "Importer namespace: Importer.parse(text) → { cameras: [{name, zones:[], motionMasks:[], objectMasks:[]}], warnings: [] } — pure, no Store access; a separate apply step commits to Store",
+    "Coordinate heuristic: if any value in a polygon > 1.001, treat the whole polygon as pixel-space (requires loaded image; otherwise block that polygon's import with a warning to upload the image first)",
+    "Import UI: collapsible 'Import YAML' card in the left column with textarea + file picker (accept .yml,.yaml) + Import button",
+    "Existing-name collisions on import get a numeric suffix (driveway → driveway_2) with a warning listing renames"
+  ],
+  "edge_cases": [
+    "Frigate also accepts list-of-pairs coordinate form ('- 0.448,0.859' per line list) — support both string and list forms",
+    "YAML anchors/aliases and comments — handled by js-yaml transparently",
+    "Empty mask string or coordinates with odd value count — skip that polygon, add to warnings, import the rest (per-polygon skip is allowed; all-or-nothing applies only to hard parse failures)",
+    "Coordinates out of 0–1 range after conversion — import anyway, range warning fires via existing Validate rule",
+    "Duplicate zone names within the same imported camera — suffix and warn",
+    "Very large config (50+ cameras) — picker renders as scrollable list; parse stays synchronous (js-yaml on <1MB text is milliseconds)"
+  ],
+  "dependencies": ["01-state-refactor.json (Store, normalized canonical)", "02-validation-warnings.json (warning banners, name validation reuse)", "Locked decision D1 (vendored js-yaml)"],
+  "risks": [
+    "Medium: real-world configs vary widely (includes, env substitutions like {FRIGATE_RTSP_PASSWORD}) — js-yaml parses them as plain strings, which is fine since we only read polygon paths",
+    "Low: vendored js-yaml adds ~40KB to the file — accepted in locked decision D1",
+    "Medium: pixel-vs-normalized heuristic misfires on a legitimate normalized value of exactly 1.0 — threshold 1.001 plus whole-polygon (not per-value) classification mitigates"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "When importing, should existing workspace polygons be kept or replaced?",
+      "options": [
+        {"label": "Merge with rename-on-collision (Recommended)", "info": "Non-destructive; undo toast not needed; collisions auto-suffixed and reported."},
+        {"label": "Replace workspace", "info": "Cleaner result but destructive; would require undo snapshot."}
+      ],
+      "selected": "Merge with rename-on-collision (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Vendor minified js-yaml into the HTML with provenance comment; smoke-test load() from file://", "inputs": ["js-yaml 4.x dist"], "outputs": ["vendored parser section"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "Implement Importer.parse: walk full-config and snippet shapes, extract zones/motion masks/object masks per camera, parse both string and list coordinate forms, classify pixel vs normalized, produce warnings", "inputs": ["T1"], "outputs": ["Importer namespace"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T3", "description": "Build import UI (collapsible card, textarea, .yml file picker, camera picker when >1 camera, warnings list) and Store.applyImport with collision suffixing", "inputs": ["T2"], "outputs": ["import flow"], "owner_role": "DevCrew", "depends_on": ["T2"]},
+    {"id": "T4", "description": "Build importer test corpus: app's own export, full Frigate sample config from docs, pixel-coordinate legacy config, list-form coordinates, anchored YAML, garbage input", "inputs": ["T2"], "outputs": ["corpus + expected results table"], "owner_role": "QA", "depends_on": ["T2"]},
+    {"id": "T5", "description": "QA: run corpus through UI, verify round-trip (import own export → re-export → diff equals input modulo key order), verify all-or-nothing on parse failure", "inputs": ["T3", "T4"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T3", "T4"]}
+  ],
+  "docs_md": "## YAML Import\nPaste an existing config.yml (or any snippet containing zones/motion/objects blocks) or pick a .yml file. Detected polygons are drawn on the canvas as normal editable items. Pixel-space legacy coordinates are auto-converted using the loaded image's dimensions. Multi-camera configs prompt for which camera to import (until the multi-camera workspace ships). Import never writes back to your original file.",
+  "stub_suggestions": [
+    {
+      "path": "frigate_config_builder.html#Importer",
+      "purpose": "Pure parse layer, fully unit-testable from console",
+      "snippet": "const Importer = {\n  parse(text) {\n    let doc;\n    try { doc = jsyaml.load(text); } catch (e) { return { error: 'YAML parse failed: ' + e.message }; }\n    if (!doc || typeof doc !== 'object') return { error: 'No YAML mapping found' };\n    const cams = doc.cameras ? Object.entries(doc.cameras) : [['(snippet)', doc]];\n    const out = { cameras: [], warnings: [] };\n    for (const [name, cfg] of cams) {\n      const cam = { name, zones: [], motionMasks: [], objectMasks: [] };\n      for (const [zName, z] of Object.entries(cfg?.zones || {}))\n        cam.zones.push({ name: zName, coords: this._coords(z.coordinates, out.warnings, zName) });\n      for (const m of this._asList(cfg?.motion?.mask))\n        cam.motionMasks.push({ coords: this._coords(m, out.warnings, 'motion mask') });\n      for (const [oType, f] of Object.entries(cfg?.objects?.filters || {}))\n        for (const m of this._asList(f?.mask))\n          cam.objectMasks.push({ objectType: oType, coords: this._coords(m, out.warnings, oType + ' mask') });\n      if (cam.zones.length || cam.motionMasks.length || cam.objectMasks.length) out.cameras.push(cam);\n    }\n    if (!out.cameras.length) return { error: 'No zones or masks found under cameras.*, zones, motion.mask, or objects.filters' };\n    return out;\n  },\n  _asList(v) { return v == null ? [] : Array.isArray(v) ? v : [v]; },\n  _coords(v, warnings, label) {\n    const nums = String(v ?? '').split(',').map(Number);\n    if (nums.length < 6 || nums.length % 2 || nums.some(isNaN)) { warnings.push(`Skipped ${label}: malformed coordinates`); return null; }\n    const pts = []; for (let i = 0; i < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] });\n    return { points: pts, pixelSpace: nums.some(n => n > 1.001) };\n  }\n};"
+    }
+  ],
+  "metrics": [
+    "100% of QA corpus files import with expected polygon counts, names, and types",
+    "Round-trip fidelity: importing the app's own export then re-exporting produces semantically identical YAML (same polygons, coords within 0.001)",
+    "Hard parse failure changes 0 workspace state fields (deep-equal before/after)"
+  ],
+  "decision_log": {
+    "rationale": "A real YAML parser is non-negotiable for user-authored configs (anchors, comments, flow style); vendoring js-yaml preserves the single-file air-gap constraint. Pure Importer.parse separated from Store.applyImport keeps parsing unit-testable and makes the multi-camera upgrade (spec 08) a change to apply, not parse.",
+    "alternatives_considered": [
+      "Rejected: hand-rolled regex/indent parser — silently corrupts edge-case configs; worst possible failure mode for a tool whose output goes into a security system",
+      "Rejected: CDN-loaded js-yaml — violates air-gap/no-network constraint",
+      "Rejected: importing camera ffmpeg/detect settings too — master spec scopes v0.2 import to polygons; camera import arrives naturally with spec 08"
+    ],
+    "tradeoffs": ["+~40KB file size", "Single-camera apply until spec 08; multi-camera configs need per-camera import passes"],
+    "confidence": "Medium",
+    "confidence_rationale": "Parser is solid; the long tail of real-world config shapes is the residual risk, mitigated by the QA corpus and per-polygon skip-with-warning behavior."
+  },
+  "defaults_applied": [
+    "Assuming js-yaml 4.x as the vendored parser",
+    "Assuming merge-with-rename import semantics (oq_001 recommended)",
+    "Assuming pixel-space classification threshold of 1.001 applied per-polygon",
+    "Assuming Frigate v0.13+ config key shapes; older review_/track formats not specifically handled (version presets are a v0.5 concern)"
+  ],
+  "suggested_story_points": 5,
+  "suggested_due_date": "2026-06-25"
+}

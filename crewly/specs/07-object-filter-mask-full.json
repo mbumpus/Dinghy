@@ -1,0 +1,81 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-object-filter-mask-full",
+  "build_order": 7,
+  "story": {
+    "title": "Complete Object Filter Mask support: 'all objects' universal mask plus objects.track awareness warning",
+    "as_a": "Frigate user filtering false positives from specific regions",
+    "i_want": "to draw one mask that applies to all tracked objects, and be warned when I draw a mask for an object type my camera isn't tracking",
+    "so_that": "I don't duplicate the same polygon six times or ship a mask Frigate will silently ignore"
+  },
+  "acceptance_criteria": [
+    "Given Object Filter Mask mode, when the object type selector is opened, then 'all objects' appears as the first option above the six standard types",
+    "Given a closed 'all objects' mask, when YAML generates, then the polygon is emitted under objects: filters: for every object type currently relevant to the workspace (tracked types if known, otherwise the six defaults), with a YAML comment noting it was generated from an 'all objects' mask",
+    "Given a camera with a known objects.track list (entered in Camera Builder or imported via spec 06), when an object filter mask is closed for a type not in that list, then a non-blocking inline warning appears ('person mask drawn, but this camera does not track person') and the polygon still commits",
+    "Given no objects.track information exists, when any object filter mask is closed, then no track warning fires (absence of data is not an error)"
+  ],
+  "constraints": [
+    "objectType value for the universal option is the literal string 'all'; expansion to concrete types happens only at YAML generation time, so the polygon stays a single editable item",
+    "Warning is warn-only per master spec ('warn, don't block'), surfaced via the spec 02 inline warning system",
+    "Camera Builder gains an optional 'Tracked objects' multi-select (the six defaults, all unchecked = unknown/unspecified); stored as camera.trackedObjects: string[] | null",
+    "No custom object types — fixed list per master spec implementation notes"
+  ],
+  "edge_cases": [
+    "'all' mask plus a specific person mask coexisting — person gets both polygons under its mask list; duplicates are legitimate Frigate config",
+    "trackedObjects defined as empty array (user checked then unchecked all) — treated as null/unknown, no warnings",
+    "Imported YAML containing an object type outside the six defaults (e.g. 'bicycle') — polygon imports with its literal type and exports faithfully; selector still offers only the fixed list for new masks",
+    "'all' expansion when trackedObjects is known and shorter than six — expand only to tracked types"
+  ],
+  "dependencies": ["02-validation-warnings.json (inline warning surface)", "01-state-refactor.json"],
+  "risks": [
+    "Low: users may expect 'all' to map to a single Frigate construct — Frigate has no universal filter mask, so expansion is the only correct emission; YAML comment explains it"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "Where does objects.track knowledge come from in v0.2?",
+      "options": [
+        {"label": "Optional Camera Builder field + import (Recommended)", "info": "Cheap, explicit, feeds the warning without guessing; null means no warnings."},
+        {"label": "Skip track awareness until v0.3 file access", "info": "Less work but leaves the master-spec validation rule unimplemented."}
+      ],
+      "selected": "Optional Camera Builder field + import (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Add 'all objects' option to selector; implement YAML-time expansion of objectType 'all' across tracked/default types with explanatory comment", "inputs": ["Yaml.generate"], "outputs": ["universal mask emission"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "Add optional Tracked Objects multi-select to Camera Builder (camera.trackedObjects), persisted and listed in camera item rows", "inputs": ["Store camera shape"], "outputs": ["trackedObjects field"], "owner_role": "DevCrew"},
+    {"id": "T3", "description": "Implement Validate.objectMaskTracked(poly, camera) warn-only rule wired into closePolygon and import apply", "inputs": ["T2", "Validate namespace"], "outputs": ["track warning"], "owner_role": "DevCrew", "depends_on": ["T2"]},
+    {"id": "T4", "description": "QA: 'all' expansion with and without trackedObjects, coexisting specific masks, untracked-type warning, import of exotic object types", "inputs": ["T1", "T3"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T1", "T3"]}
+  ],
+  "docs_md": "## Object Filter Masks (Full)\nAdds an 'all objects' option that draws once and exports under every relevant object type (Frigate has no universal filter mask, so the app expands it at export with a comment). Cameras can optionally declare which objects they track; drawing a mask for an untracked type produces a friendly warning, never a block.",
+  "stub_suggestions": [
+    {
+      "path": "frigate_config_builder.html#YamlObjectMasks",
+      "purpose": "'all' expansion at emission time",
+      "snippet": "function emitObjectMasks(objectMasks, trackedObjects) {\n  const universe = (trackedObjects && trackedObjects.length) ? trackedObjects : ['person','car','dog','cat','bird','package'];\n  const byType = {};\n  for (const m of objectMasks) {\n    const targets = m.objectType === 'all' ? universe : [m.objectType];\n    for (const t of targets) (byType[t] ??= []).push({ mask: m, fromAll: m.objectType === 'all' });\n  }\n  let out = 'objects:\\n  filters:\\n';\n  for (const [type, entries] of Object.entries(byType)) {\n    out += `    ${type}:\\n      mask:\\n`;\n    for (const e of entries) out += `        - ${coordString(e.mask.points)}${e.fromAll ? '  # from \"all objects\" mask' : ''}\\n`;\n  }\n  return out;\n}"
+    }
+  ],
+  "metrics": [
+    "'all' mask emits under exactly N types where N = tracked count (or 6 when unknown), verified per QA matrix",
+    "Track-mismatch warning fires in 100% of untracked-type cases and 0% of unknown-trackedObjects cases",
+    "Emitted YAML for expanded masks accepted by Frigate config validation (manual check against a live Frigate instance or its config schema)"
+  ],
+  "decision_log": {
+    "rationale": "Storing 'all' as a single polygon and expanding at emission keeps the canvas/item-list model unchanged (one drawable, one list row) while producing the only YAML shape Frigate understands.",
+    "alternatives_considered": [
+      "Rejected: cloning the polygon six times at close — six list items for one shape; edits desync",
+      "Rejected: blocking untracked-type masks — master spec says warn, don't block",
+      "Rejected: parsing objects.track automatically from a live Frigate API — no API calls allowed until v0.3+ and even then out of v0.2 scope"
+    ],
+    "tradeoffs": ["Expanded YAML is longer than users might expect (comment mitigates)", "trackedObjects is optional, so the warning only helps users who fill it in or import configs"],
+    "confidence": "High",
+    "confidence_rationale": "Small additive feature on top of stable Yaml/Validate layers; Frigate's objects.filters shape is well documented."
+  },
+  "defaults_applied": [
+    "Assuming 'all' expands to the six defaults when trackedObjects is unknown",
+    "Assuming trackedObjects UI is checkbox multi-select limited to the six defaults",
+    "Assuming exotic imported object types are preserved verbatim but not offered for new drawings"
+  ],
+  "suggested_story_points": 2,
+  "suggested_due_date": "2026-06-26"
+}
