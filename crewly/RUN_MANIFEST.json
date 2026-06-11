@@ -6,6 +6,13 @@
   "status": "COMPLETE",
   "completed": "2026-06-11",
   "final_verdict": "APPROVED",
+  "v0_4": {
+    "spec": "crewly/specs/10-onvif-discovery.json",
+    "points": 8,
+    "status": "IMPLEMENTED_PENDING_HUMAN_T5",
+    "verdicts": { "qa": "APPROVED", "morgan_alignment": "ALIGNED" },
+    "human_t5": "Discover real cameras on home LAN, connect with creds, verify populated RTSP works in Frigate; confirm <5s and macOS Local Network permission flow"
+  },
   "v0_3": {
     "spec": "crewly/specs/09-electron-dinghy.json",
     "points": 8,

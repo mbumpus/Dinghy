@@ -1,0 +1,100 @@
+{
+  "status": "SPECIFICATION_COMPLETE",
+  "card_id": "local-onvif-discovery",
+  "build_order": 10,
+  "milestone": "v0.4",
+  "story": {
+    "title": "ONVIF camera discovery: find cameras on the LAN and auto-populate the Camera Builder with names, stream profiles, and RTSP URLs",
+    "as_a": "Frigate user who doesn't know (or want to Google) their camera's RTSP URL pattern",
+    "i_want": "Dinghy to discover cameras on my network, and after I give per-camera credentials, fill the Camera Builder with the exact RTSP URLs and stream profiles the camera reports",
+    "so_that": "the 'find the magic URL' step disappears entirely"
+  },
+  "acceptance_criteria": [
+    "Given the desktop app on a LAN, when the user clicks 'Discover Cameras (ONVIF)' in the Camera Builder, then a WS-Discovery probe (UDP multicast 239.255.255.250:3702) runs with a 4s window and discovered devices list with name/hardware (from probe scopes) and address — completing in under 5 seconds",
+    "Given a discovered device, when the user enters username/password and clicks Connect, then Dinghy queries GetDeviceInformation and the device's media profiles, and lists each profile with name, resolution, and frame rate",
+    "Given a listed profile, when the user clicks 'Use', then the Camera Builder form is populated: camera name slugified from model/name (passing the app's name regex), Input Path set to the profile's RTSP URI with credentials embedded (Frigate URL format), detect width/height/fps from the profile, and roles pre-checked detect (+record when it is the highest-resolution profile)",
+    "Given no devices respond or UDP multicast is blocked, when discovery completes, then a friendly inline message explains nothing was found and manual entry remains fully usable",
+    "Given wrong credentials or an unreachable device, when Connect runs, then a structured error shows inline (credentials never echoed) and the device stays in the list for retry",
+    "Given dinghy.html opened in a plain browser, when the Camera Builder renders, then no ONVIF UI exists at all (guarded like all native features)"
+  ],
+  "constraints": [
+    "Library: agsh/onvif (npm 'onvif') in the main process only; discovery and device queries never run in the renderer",
+    "IPC surface additions: onvif:discover → [{address, port, name, hardware, xaddr}]; onvif:device (address, port, username, password) → {manufacturer, model, profiles:[{name, token, width, height, fps, rtsp}]} | {error}",
+    "Credentials are passed per-call over IPC, held only in memory for the call, never logged, never written to trace, and stripped from any error text; the only persistence is the user-visible RTSP URL in the camera input (identical to typing it manually)",
+    "Scope per master spec: discovery only — no PTZ, no analytics, no device configuration; non-ONVIF cameras fall back to manual entry",
+    "Discovery results are transient native-only UI state (module-level, not Store) — documented deviation from the Store-only rule since results are never persisted or rendered by View",
+    "Probe timeout 4000ms; per-device connect timeout 8000ms",
+    "All renderer additions guarded by window.dinghyNative; zero impact on browser build"
+  ],
+  "edge_cases": [
+    "Device responds to probe but rejects unauthenticated GetDeviceInformation — name falls back to probe-scope name; profiles still require creds (normal flow)",
+    "RTSP URI from GetStreamUri already contains a port or query string — credentials injected after scheme without disturbing the rest",
+    "Multiple network interfaces — onvif lib probes default interface; document limitation",
+    "Duplicate discovery clicks — button disabled while a probe is in flight",
+    "Camera reports profile without videoEncoderConfiguration — profile listed with unknown resolution, still usable",
+    "Slugified name collides with existing camera — existing Validate.cameraName surfaces the inline error on Add as usual",
+    "macOS local-network permission prompt may appear on first probe — note in README"
+  ],
+  "dependencies": ["v0.3 Electron shell + dinghyNative bridge", "npm 'onvif' package", "UDP multicast reachable on user LAN"],
+  "risks": [
+    "Medium: ONVIF implementations vary wildly across vendors — defensive parsing with optional chaining, profile-level fallbacks",
+    "Medium: cannot integration-test against real cameras in this environment — QA covers syntax/IPC contract/browser parity/launch smoke; real-camera validation is Human T5",
+    "Low: agsh/onvif callback-style API quirks — wrapped in promisified helpers"
+  ],
+  "open_questions": [
+    {
+      "id": "oq_001",
+      "question": "Where do discovered-camera credentials live after Connect?",
+      "options": [
+        {"label": "Only in the generated RTSP URL (Recommended)", "info": "Matches manual-entry behavior and Frigate's own config format; no new secret store."},
+        {"label": "Electron safeStorage keychain", "info": "More secure at rest but adds a secrets subsystem v0.4 doesn't otherwise need."}
+      ],
+      "selected": "Only in the generated RTSP URL (Recommended)"
+    }
+  ],
+  "tasks": [
+    {"id": "T1", "description": "Add 'onvif' dependency; main.js IPC: onvif:discover (Discovery.probe, scope parsing for name/hardware, address extraction from xaddrs) and onvif:device (Cam connect, getDeviceInformation, profiles, getStreamUri per profile, credential-sanitized errors)", "inputs": ["onvif npm package"], "outputs": ["main-process ONVIF module"], "owner_role": "DevCrew"},
+    {"id": "T2", "description": "preload.js: discoverCameras(), getCameraStreams(params) added to dinghyNative", "inputs": ["T1"], "outputs": ["extended bridge"], "owner_role": "DevCrew", "depends_on": ["T1"]},
+    {"id": "T3", "description": "Camera Builder UI (native-only): Discover button, device list with per-device creds + Connect, profile rows with Use buttons populating the form (slugified name, creds-embedded RTSP, dims/fps, roles)", "inputs": ["T2"], "outputs": ["discovery UI in dinghy.html"], "owner_role": "DevCrew", "depends_on": ["T2"]},
+    {"id": "T4", "description": "QA: node --check all surfaces, browser parity (no ONVIF UI, v0.2/v0.3 regressions), Electron launch smoke, scope-parsing unit check via node, credential-leak grep of error paths", "inputs": ["T3"], "outputs": ["QA report"], "owner_role": "QA", "depends_on": ["T3"]},
+    {"id": "T5", "description": "Human: discover real cameras on home LAN, connect with creds, verify populated RTSP works in Frigate; confirm <5s discovery and macOS local-network permission flow", "inputs": ["T4"], "outputs": ["sign-off"], "owner_role": "Human", "depends_on": ["T4"]}
+  ],
+  "docs_md": "## Dinghy v0.4 — ONVIF Discovery\nDesktop-only. 'Discover Cameras (ONVIF)' sends a WS-Discovery multicast probe; responding cameras list with their advertised name and address. Enter that camera's credentials and Connect to pull its real stream profiles; one click drops a profile into the Camera Builder form with the exact RTSP URL. Discovery only — no PTZ or device configuration. Non-ONVIF cameras: manual entry as before.",
+  "stub_suggestions": [
+    {
+      "path": "src/main.js#onvif",
+      "purpose": "Discovery + device query IPC",
+      "snippet": "const { Discovery, Cam } = require('onvif');\nipcMain.handle('onvif:discover', () => new Promise(resolve => {\n  const found = [];\n  Discovery.probe({ timeout: 4000, resolve: false }, (err, matches) => {\n    if (err) return resolve({ error: 'Discovery failed: ' + err.message });\n    for (const m of matches || []) found.push(parseProbeMatch(m));\n    resolve({ devices: found.filter(Boolean) });\n  });\n}));"
+    },
+    {
+      "path": "dinghy.html#OnvifUI",
+      "purpose": "Transient native-only discovery panel",
+      "snippet": "const OnvifUI = {\n  devices: [],\n  async discover() { /* disable btn, await dinghyNative.discoverCameras(), render list */ },\n  async connect(i) { /* read creds inputs, await getCameraStreams, render profiles */ },\n  use(i, p) { /* fill cam form: slug(name), injectCreds(rtsp), dims, roles */ }\n};"
+    }
+  ],
+  "metrics": [
+    "Discovery round-trip (click → list rendered) ≤ 5s with 4s probe window",
+    "0 occurrences of password values in any error string or trace output (code-path review + grep)",
+    "Browser build: 0 ONVIF DOM nodes rendered, 0 regressions in parity suite",
+    "Real-camera validation (T5): populated RTSP URL accepted by Frigate unmodified"
+  ],
+  "decision_log": {
+    "rationale": "Two-stage UX (unauthenticated probe → per-device creds → profiles) reflects how ONVIF actually works rather than pretending discovery alone yields stream URLs. Main-process-only ONVIF keeps the renderer sandbox intact and the bridge auditably small.",
+    "alternatives_considered": [
+      "Rejected: ask for one global credential and try it on every device — leaks creds to every responder, fails mixed-vendor setups",
+      "Rejected: raw hand-rolled WS-Discovery/SOAP — agsh/onvif is the master-spec-named, maintained path",
+      "Rejected: storing creds in a keychain (oq_001) — new subsystem with no v0.4 payoff"
+    ],
+    "tradeoffs": ["Discovery panel state lives outside Store (documented)", "No multi-NIC selection in v0.4", "Real-camera correctness rests on Human T5"],
+    "confidence": "Medium",
+    "confidence_rationale": "IPC and UI are straightforward; vendor variance in ONVIF responses is the known unknown, mitigated by defensive parsing and per-profile fallbacks."
+  },
+  "defaults_applied": [
+    "Assuming creds live only in the generated RTSP URL (oq_001 recommended)",
+    "Assuming 'record' role pre-checks only on the highest-resolution profile; 'detect' pre-checks on all",
+    "Assuming discovery UI lives in the Camera Builder form card above manual fields",
+    "Assuming onvif lib default network interface behavior is acceptable for v0.4"
+  ],
+  "suggested_story_points": 8,
+  "suggested_due_date": "2026-06-19"
+}

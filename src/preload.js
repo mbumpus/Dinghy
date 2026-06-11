@@ -6,5 +6,7 @@ contextBridge.exposeInMainWorld('dinghyNative', {
   openConfig: () => ipcRenderer.invoke('config:open'),
   saveConfig: (content, opts) => ipcRenderer.invoke('config:save', content, opts || {}),
   grabFrame: (rtspUrl) => ipcRenderer.invoke('frame:grab', rtspUrl),
+  discoverCameras: () => ipcRenderer.invoke('onvif:discover'),
+  getCameraStreams: (opts) => ipcRenderer.invoke('onvif:device', opts),
   onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action))
 });

@@ -549,6 +549,11 @@
     <div class="card cam-form">
       <div class="card-header"><h3>Add Camera</h3></div>
       <div class="card-body">
+        <div id="onvifWrap" style="display:none">
+          <button class="btn secondary btn-sm" id="discoverBtn" style="width:100%" onclick="OnvifUI.discover()">📡 Discover Cameras (ONVIF)</button>
+          <div id="onvifResults" style="margin-top:0.5rem"></div>
+          <div class="section-title">or add manually</div>
+        </div>
         <label>Camera Name</label>
         <input type="text" id="camName" placeholder="front_door">
         <div class="field-error" id="camNameError"></div>
@@ -1831,6 +1836,96 @@ document.getElementById('shapeName').addEventListener('input', e => {
   }
 });
 
+// ---- spec 10: ONVIF discovery panel (native-only, transient UI state by design) ----
+const OnvifUI = {
+  devices: [],
+
+  _slug(s) {
+    let out = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!out) out = 'camera';
+    if (!/^[a-z]/.test(out)) out = 'cam_' + out;
+    return out;
+  },
+  _injectCreds(uri, user, pass) {
+    if (!user) return uri;
+    return uri.replace(/^(rtsps?:\/\/)/i, m => m + encodeURIComponent(user) + ':' + encodeURIComponent(pass || '') + '@');
+  },
+
+  async discover() {
+    if (!window.dinghyNative) return;
+    const btn = document.getElementById('discoverBtn');
+    btn.disabled = true;
+    btn.textContent = 'Discovering… (4s probe)';
+    const res = await dinghyNative.discoverCameras();
+    btn.disabled = false;
+    btn.textContent = '📡 Discover Cameras (ONVIF)';
+    const wrap = document.getElementById('onvifResults');
+    if (res.error) { wrap.innerHTML = `<div class="field-warn visible">${esc(res.error)}</div>`; return; }
+    this.devices = (res.devices || []).map(d => ({ ...d, info: null, error: null }));
+    if (!this.devices.length) {
+      wrap.innerHTML = '<div class="field-warn visible">No ONVIF cameras responded. Check the camera is on this network (and that ONVIF is enabled on it), or add it manually below.</div>';
+      return;
+    }
+    this.render();
+  },
+
+  async connect(i) {
+    const d = this.devices[i];
+    const user = document.getElementById(`onvifUser${i}`).value.trim();
+    const pass = document.getElementById(`onvifPass${i}`).value;
+    d.error = null;
+    d.connecting = true;
+    this.render();
+    const res = await dinghyNative.getCameraStreams({ address: d.address, port: d.port, username: user, password: pass });
+    d.connecting = false;
+    if (res.error) d.error = res.error;
+    else { d.info = res; d.creds = { user, pass }; }
+    this.render();
+  },
+
+  use(di, pi) {
+    const d = this.devices[di];
+    const p = d.info.profiles[pi];
+    if (!p.rtsp) return;
+    document.getElementById('camName').value = this._slug(d.info.model || d.name || d.hardware);
+    document.getElementById('camInput').value = this._injectCreds(p.rtsp, d.creds.user, d.creds.pass);
+    if (p.width) document.getElementById('camWidth').value = p.width;
+    if (p.height) document.getElementById('camHeight').value = p.height;
+    if (p.fps) document.getElementById('camFps').value = Math.round(p.fps);
+    document.getElementById('roleDetect').checked = true;
+    // record pre-checks only on the device's highest-resolution profile
+    const maxRes = Math.max(...d.info.profiles.map(x => (x.width || 0) * (x.height || 0)));
+    document.getElementById('roleRecord').checked = (p.width || 0) * (p.height || 0) === maxRes && maxRes > 0;
+    Toast.show(`Filled form from ${esc(p.name)} — review and click Add Camera`);
+  },
+
+  render() {
+    const wrap = document.getElementById('onvifResults');
+    wrap.innerHTML = this.devices.map((d, i) => `
+      <div class="item" style="flex-direction:column;align-items:stretch;cursor:default">
+        <div>
+          <div class="item-name">${esc(d.name || d.hardware || 'ONVIF device')}</div>
+          <div class="item-type">${esc(d.address)}:${d.port}${d.hardware && d.name ? ' · ' + esc(d.hardware) : ''}</div>
+        </div>
+        ${d.info ? `
+          <div class="item-type" style="margin-top:0.3rem">${esc(d.info.manufacturer || '')} ${esc(d.info.model || '')}</div>
+          ${d.info.profiles.map((p, pi) => `
+            <div style="display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem">
+              <span class="item-type" style="flex:1">${esc(p.name)}${p.width ? ` ${p.width}×${p.height}` : ''}${p.fps ? ` @${Math.round(p.fps)}fps` : ''}</span>
+              ${p.rtsp ? `<button class="btn btn-sm" onclick="OnvifUI.use(${i},${pi})">Use</button>` : '<span class="item-type">no RTSP</span>'}
+            </div>`).join('')}
+        ` : `
+          <div style="display:flex;gap:0.4rem;margin-top:0.4rem">
+            <input type="text" id="onvifUser${i}" placeholder="user" style="flex:1">
+            <input type="password" id="onvifPass${i}" placeholder="password" style="flex:1">
+            <button class="btn btn-sm" onclick="OnvifUI.connect(${i})" ${d.connecting ? 'disabled' : ''}>${d.connecting ? '…' : 'Connect'}</button>
+          </div>
+          ${d.error ? `<div class="field-error visible">${esc(d.error)}</div>` : ''}
+        `}
+      </div>`).join('');
+  }
+};
+
 // ---- spec 09: Electron menu wiring (no-op in plain browsers) ----
 if (window.dinghyNative) {
   dinghyNative.onMenu(action => {
@@ -1839,6 +1934,7 @@ if (window.dinghyNative) {
     else if (action === 'save-config-as') UI.saveConfigNative(true);
     else if (action === 'export-yaml') UI.downloadYaml();
   });
+  document.getElementById('onvifWrap').style.display = 'block';
 }
 
 // ==================== INIT ====================

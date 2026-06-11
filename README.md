@@ -31,10 +31,11 @@ npm run dist       # package installers (dmg / AppImage / exe via electron-build
 - YAML scope toggle: **This camera** (paste-ready snippet) or **All cameras** (complete `cameras:` config)
 - Importing a multi-camera config creates the cameras and routes polygons to their tabs
 
-### Desktop extras (v0.3)
+### Desktop extras (v0.3+)
 - **File → Open Config…** loads a real `config.yml` through the importer and remembers the path
 - **File → Save Config / Save Config As…** writes the generated full config to disk (v0.3 writes Dinghy's generated config; merging into untouched keys of an existing file is planned)
 - **Grab Frame** spawns system `ffmpeg` for a single RTSP frame (15s timeout, credentials never logged); a clear error appears if ffmpeg is missing
+- **Discover Cameras (ONVIF)** — WS-Discovery multicast probe finds cameras on your LAN in under 5 seconds; enter that camera's credentials to pull its real stream profiles, then one click fills the Camera Builder with the exact RTSP URL, resolution, and FPS. Discovery only (no PTZ or device config); non-ONVIF cameras use manual entry. macOS may ask for Local Network permission on first use.
 
 ### Persistence
 - Work auto-saves to localStorage — polygons, cameras, even the in-progress draft. Images are never stored; after a refresh you're prompted to re-load the frame and polygons reappear.
@@ -57,8 +58,9 @@ Origin top-left; coordinates normalized (`x / width`, `y / height`), emitted to 
 |---------|--------|-------|
 | v0.1 | shipped | Core editor, camera builder, live YAML |
 | v0.2 | shipped | YAML import, point editing, clipboard paste, persistence, multi-camera, validation |
-| v0.3 | **shipped** | Electron desktop app: config.yml open/save, FFmpeg RTSP frame grab, Dinghy branding |
-| v0.4 | next | ONVIF camera discovery on the local network |
+| v0.3 | shipped | Electron desktop app: config.yml open/save, FFmpeg RTSP frame grab, Dinghy branding |
+| v0.4 | **shipped** | ONVIF camera discovery on the local network |
+| v0.5 | future | Community camera-URL database, Frigate version presets |
 
 Specs, architecture decisions, and the build audit trail live in [`crewly/`](crewly/).
 
