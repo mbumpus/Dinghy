@@ -67,7 +67,7 @@
     {
       "path": "frigate_config_builder.html#YamlScopes",
       "purpose": "Scoped emission",
-      "snippet": "Yaml.generate = (ws, scope) => scope === 'all'\n  ? Yaml.fullConfig(ws)            // cameras: { name: { ffmpeg, detect, zones, motion, objects } }\n  : Yaml.cameraSnippet(ws, ws.activeCameraId); // zones/motion/objects only";
+      "snippet": "Yaml.generate = (ws, scope) => scope === 'all'\n  ? Yaml.fullConfig(ws)            // cameras: { name: { ffmpeg, detect, zones, motion, objects } }\n  : Yaml.cameraSnippet(ws, ws.activeCameraId); // zones/motion/objects only"
     }
   ],
   "metrics": [

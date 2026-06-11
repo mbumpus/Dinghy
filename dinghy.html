@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Dinghy</title>
 <style>
   :root {
@@ -643,7 +644,8 @@ const Store = {
     polygonsByCamera: { default: [] }, // {id, name, type, objectType?, points:[{x,y}], closed}
     imagesMeta: {},                    // {cameraId: {w, h, filename}} — dims only, no bytes
     draft: { points: [], type: 'motion_mask' },
-    draftsByCamera: {}                 // parked drafts for inactive cameras (spec 08)
+    draftsByCamera: {},                // parked drafts for inactive cameras (spec 08)
+    yamlScope: 'camera'                // 'camera' snippet | 'all' full config (spec 08)
   },
   _subs: [],
   subscribe(fn) { this._subs.push(fn); },
@@ -703,27 +705,30 @@ const Store = {
     return { ok: true };
   },
   deletePolygon(id) {
+    const camId = this.state.activeCameraId;
     const polys = this.activePolygons();
     const idx = polys.findIndex(p => p.id === id);
     if (idx === -1) return null;
     const [removed] = polys.splice(idx, 1);
     this._notify();
-    return { polygon: removed, index: idx };
+    return { polygon: removed, index: idx, camId };
   },
-  restorePolygon(polygon, index) {
-    const polys = this.activePolygons();
-    polys.splice(Math.min(index, polys.length), 0, polygon);
+  // undo restores into the camera the polygon was deleted from, not whichever is active
+  restorePolygon(snap) {
+    const polys = (this.state.polygonsByCamera[snap.camId] ??= []);
+    polys.splice(Math.min(snap.index, polys.length), 0, snap.polygon);
     this._notify();
   },
   clearPolygons() {
+    const camId = this.state.activeCameraId;
     const removed = this.activePolygons().slice();
-    this.state.polygonsByCamera[this.state.activeCameraId] = [];
+    this.state.polygonsByCamera[camId] = [];
     this.state.draft.points = [];
     this._notify();
-    return removed;
+    return { polygons: removed, camId };
   },
-  restorePolygons(polys) {
-    this.state.polygonsByCamera[this.state.activeCameraId] = polys.slice();
+  restorePolygons(snap) {
+    this.state.polygonsByCamera[snap.camId] = snap.polygons.slice();
     this._notify();
   },
 
@@ -742,8 +747,13 @@ const Store = {
     const meta = this.state.imagesMeta[id];
     delete this.state.polygonsByCamera[id];
     delete this.state.imagesMeta[id];
+    delete this.state.draftsByCamera[id];
     delete Images[id];
-    if (this.state.activeCameraId === id) this.state.activeCameraId = 'default';
+    if (this.state.activeCameraId === id) {
+      // don't carry the deleted camera's draft over to the default tab
+      this.state.activeCameraId = 'default';
+      this.state.draft = this.state.draftsByCamera.default || { points: [], type: this.state.draft.type };
+    }
     this._notify();
     return { camera: cam, index: idx, polygons, meta };
   },
@@ -816,8 +826,13 @@ const Store = {
       polygonsByCamera: { default: [] },
       imagesMeta: {},
       draft: { points: [], type: document.getElementById('drawMode').value },
-      draftsByCamera: {}
+      draftsByCamera: {},
+      yamlScope: 'camera'
     };
+    this._notify();
+  },
+  setYamlScope(scope) {
+    this.state.yamlScope = scope === 'all' ? 'all' : 'camera';
     this._notify();
   },
   hydrate(ws) {
@@ -874,9 +889,10 @@ const Store = {
       }
       const polys = (s.polygonsByCamera[camId] ??= []);
       const names = new Set(polys.map(p => p.name));
+      // only a *loaded* image gives trustworthy dims; stale persisted meta could
+      // silently normalize pixel coords against the wrong resolution
       const im = Images[camId];
-      const meta = s.imagesMeta[camId];
-      const dims = im ? { w: im.w, h: im.h } : meta ? { w: meta.w, h: meta.h } : null;
+      const dims = im ? { w: im.w, h: im.h } : null;
       const add = (name, type, objectType, coords) => {
         if (!coords) return;
         let pts = coords.points;
@@ -1043,22 +1059,26 @@ const Persist = {
     }, 500);
   },
   load() {
+    let raw;
+    try { raw = localStorage.getItem(this.KEY); } catch { return { ws: null }; }
+    if (!raw) return { ws: null };
     try {
-      const raw = localStorage.getItem(this.KEY);
-      if (!raw) return null;
       const ws = JSON.parse(raw);
       if (ws.schemaVersion === 2) { // v2→v3 migration (spec 08)
         ws.schemaVersion = 3;
         ws.draftsByCamera = {};
       }
-      if (ws.schemaVersion !== 3) return null; // discard unknown schema
+      if (ws.schemaVersion !== 3) throw new Error('unknown schema');
       ws.draftsByCamera ??= {};
-      return ws;
+      ws.yamlScope ??= 'camera';
+      return { ws };
     } catch {
-      return null;
+      this.clear(); // corrupt/unknown data is removed, not left to fail every load
+      return { ws: null, discarded: true };
     }
   },
   clear() {
+    clearTimeout(this._t); // cancel any pending debounced save so the key stays gone
     try { localStorage.removeItem(this.KEY); } catch {}
   }
 };
@@ -1161,8 +1181,9 @@ const Importer = {
     let doc;
     try { doc = jsyaml.load(text); } catch (e) { return { error: 'YAML parse failed: ' + e.message }; }
     if (!doc || typeof doc !== 'object') return { error: 'No YAML mapping found.' };
+    // full config: camera entries PLUS any top-level (global) zones/motion/objects blocks
     const cams = doc.cameras && typeof doc.cameras === 'object'
-      ? Object.entries(doc.cameras)
+      ? [...Object.entries(doc.cameras), ['(snippet)', { zones: doc.zones, motion: doc.motion, objects: doc.objects }]]
       : [['(snippet)', doc]];
     const out = { cameras: [], warnings: [] };
     for (const [name, cfg] of cams) {
@@ -1187,13 +1208,15 @@ const Importer = {
   _settings(cfg) {
     const input = cfg.ffmpeg && Array.isArray(cfg.ffmpeg.inputs) ? cfg.ffmpeg.inputs[0] : null;
     const detect = cfg.detect || {};
+    // coerce types from arbitrary YAML — imported values flow into the DOM and YAML output
+    const roles = input && input.roles;
     return {
-      input: input && input.path,
-      roles: input && input.roles,
-      width: detect.width,
-      height: detect.height,
-      fps: detect.fps,
-      track: (cfg.objects && Array.isArray(cfg.objects.track)) ? cfg.objects.track : null
+      input: input && input.path != null ? String(input.path) : null,
+      roles: Array.isArray(roles) ? roles.map(String) : roles != null ? [String(roles)] : null,
+      width: Number(detect.width) || null,
+      height: Number(detect.height) || null,
+      fps: Number(detect.fps) || null,
+      track: (cfg.objects && Array.isArray(cfg.objects.track)) ? cfg.objects.track.map(String) : null
     };
   },
   _asList(v) { return v == null ? [] : Array.isArray(v) ? v : [v]; },
@@ -1212,8 +1235,6 @@ const Importer = {
 };
 
 // ==================== VIEW ====================
-let YamlScope = 'camera'; // spec 08: 'camera' (snippet) | 'all' (full config)
-
 const View = {
   canvas: null,
   ctx: null,
@@ -1304,7 +1325,10 @@ const View = {
       ctx.fillStyle = poly.type === 'zone' ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
       ctx.fill();
     }
-    for (const p of pts) this._drawHandle(ctx, p.px, p.py, color);
+    pts.forEach((p, i) => {
+      const hot = Pointer.hover && Pointer.hover.polyId === poly.id && Pointer.hover.index === i;
+      this._drawHandle(ctx, p.px, p.py, color, hot);
+    });
     if (poly.closed && pts.length) {
       ctx.fillStyle = color;
       ctx.font = 'bold 13px sans-serif';
@@ -1331,12 +1355,12 @@ const View = {
     }
   },
 
-  _drawHandle(ctx, px, py, color) {
+  _drawHandle(ctx, px, py, color, hot) {
     ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
+    ctx.arc(px, py, hot ? 7 : 5, 0, Math.PI * 2);
+    ctx.fillStyle = hot ? '#58a6ff' : '#fff'; // spec 05: hovered vertex highlights
     ctx.fill();
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = hot ? '#fff' : color;
     ctx.lineWidth = 2;
     ctx.stroke();
   },
@@ -1383,7 +1407,7 @@ const View = {
       <div class="item" data-id="${c.id}">
         <div>
           <div class="item-name">${esc(c.name)}</div>
-          <div class="item-type">${c.width}×${c.height} @ ${c.fps}fps · ${c.roles.join(', ')}${c.trackedObjects ? ' · track: ' + c.trackedObjects.map(esc).join(', ') : ''}</div>
+          <div class="item-type">${esc(c.width)}×${esc(c.height)} @ ${esc(c.fps)}fps · ${c.roles.map(esc).join(', ')}${c.trackedObjects ? ' · track: ' + c.trackedObjects.map(esc).join(', ') : ''}</div>
         </div>
         <div class="item-actions">
           <button onclick="UI.deleteCamera('${c.id}')" title="Delete">×</button>
@@ -1393,9 +1417,10 @@ const View = {
   },
 
   renderYaml(ws) {
-    document.getElementById('yamlOut').value = YamlScope === 'all'
+    document.getElementById('yamlOut').value = ws.yamlScope === 'all'
       ? Yaml.fullConfig(ws)
       : Yaml.cameraSnippet(ws, ws.activeCameraId);
+    document.getElementById('yamlScope').value = ws.yamlScope || 'camera';
     document.getElementById('camYamlOut').textContent = Yaml.fullConfig(ws);
     this.renderRangeBanner(ws);
   },
@@ -1458,17 +1483,18 @@ const UI = {
       View.showFieldError('drawError', 'A polygon needs at least 3 points.');
       return;
     }
-    const name = document.getElementById('shapeName').value.trim()
-      || 'item_' + (Store.activePolygons().length + 1);
-    // AC: zone name rules block commit with inline error (zones only; masks have no Frigate-visible name)
+    const rawName = document.getElementById('shapeName').value.trim();
+    // AC: zone name rules block commit with inline error — including empty name
+    // (masks have no Frigate-visible name and may auto-name)
     if (Store.state.draft.type === 'zone') {
-      const issues = Validate.polygonName(name, Store.state);
+      const issues = Validate.polygonName(rawName, Store.state);
       const error = issues.find(i => i.level === 'error');
       if (error) {
         View.showFieldError('nameError', error.message);
         return;
       }
     }
+    const name = rawName || 'item_' + (Store.activePolygons().length + 1);
     const objType = document.getElementById('objectType').value;
     // spec 07: warn (never block) when mask targets an untracked object type
     const trackWarns = Store.state.draft.type === 'object_filter_mask'
@@ -1487,8 +1513,7 @@ const UI = {
   },
 
   changeYamlScope() {
-    YamlScope = document.getElementById('yamlScope').value;
-    View.render(Store.state);
+    Store.setYamlScope(document.getElementById('yamlScope').value);
   },
 
   // ---- spec 06: YAML import ----
@@ -1561,17 +1586,23 @@ const UI = {
 
   deleteItem(id) {
     const snap = Store.deletePolygon(id);
-    if (snap) Toast.show(`Deleted “${snap.polygon.name}”`, () => Store.restorePolygon(snap.polygon, snap.index));
+    if (snap) Toast.show(`Deleted “${snap.polygon.name}”`, () => Store.restorePolygon(snap));
   },
   clearAll() {
-    const removed = Store.clearPolygons();
-    if (removed.length) Toast.show(`Deleted ${removed.length} item${removed.length > 1 ? 's' : ''}`, () => Store.restorePolygons(removed));
+    const snap = Store.clearPolygons();
+    const n = snap.polygons.length;
+    if (n) Toast.show(`Deleted ${n} item${n > 1 ? 's' : ''}`, () => Store.restorePolygons(snap));
   },
   clearAllData() {
     const snap = Store.snapshotState();
-    Persist.clear();
-    Store.reset();
-    Toast.show('All data cleared', () => Store.hydrate(snap));
+    const imgs = Object.assign(Object.create(null), Images);
+    for (const k of Object.keys(Images)) delete Images[k]; // runtime images go too
+    Store.reset();    // schedules a debounced save of the fresh state…
+    Persist.clear();  // …which clear() cancels along with removing the key
+    Toast.show('All data cleared', () => {
+      Object.assign(Images, imgs);
+      Store.hydrate(snap);
+    });
   },
 
   copyYaml() { Platform.copyText(document.getElementById('yamlOut').value); },
@@ -1682,7 +1713,7 @@ function pointToSegment(px, py, a, b) {
 }
 
 // ---- spec 05: pointer state machine (vertex > edge > draft point priority) ----
-const Pointer = { dragging: false, moved: false, pendingDraft: null, _raf: null, _next: null };
+const Pointer = { dragging: false, moved: false, pendingDraft: null, _raf: null, _next: null, hover: null, _hoverKey: null };
 const editorCanvas = document.getElementById('editorCanvas');
 
 editorCanvas.addEventListener('mousedown', e => {
@@ -1723,14 +1754,32 @@ editorCanvas.addEventListener('mousemove', e => {
     }
     return;
   }
-  // hover affordance
-  editorCanvas.style.cursor = vertexAt(mx, my, Store.state, scale, im) ? 'grab'
+  // hover affordance + vertex highlight (spec 05)
+  const hv = vertexAt(mx, my, Store.state, scale, im);
+  const key = hv ? hv.polyId + ':' + hv.index : null;
+  if (key !== Pointer._hoverKey) {
+    Pointer._hoverKey = key;
+    Pointer.hover = hv;
+    View.renderCanvas(Store.state);
+  }
+  editorCanvas.style.cursor = hv ? 'grab'
     : edgeAt(mx, my, Store.state, scale, im) ? 'copy' : 'crosshair';
+});
+
+editorCanvas.addEventListener('mouseleave', () => {
+  if (Pointer._hoverKey) {
+    Pointer._hoverKey = null;
+    Pointer.hover = null;
+    View.renderCanvas(Store.state);
+  }
 });
 
 window.addEventListener('mouseup', e => {
   if (Pointer.dragging) {
     Pointer.dragging = false;
+    if (Pointer._raf) { cancelAnimationFrame(Pointer._raf); Pointer._raf = null; }
+    // commit the final position even if the queued animation frame never fired
+    if (Pointer._next) Store.dragTo(Pointer._next.x, Pointer._next.y);
     Pointer._next = null;
     Store.endDrag();
     return;
@@ -1777,6 +1826,7 @@ document.addEventListener('keydown', e => {
   } else if (e.key === 'Escape') {
     if (Pointer.dragging) {
       Pointer.dragging = false;
+      if (Pointer._raf) { cancelAnimationFrame(Pointer._raf); Pointer._raf = null; }
       Pointer._next = null;
       Store.cancelDrag();
     } else {
@@ -1861,7 +1911,7 @@ const OnvifUI = {
     btn.textContent = '📡 Discover Cameras (ONVIF)';
     const wrap = document.getElementById('onvifResults');
     if (res.error) { wrap.innerHTML = `<div class="field-warn visible">${esc(res.error)}</div>`; return; }
-    this.devices = (res.devices || []).map(d => ({ ...d, info: null, error: null }));
+    this.devices = (res.devices || []).map(d => ({ ...d, info: null }));
     if (!this.devices.length) {
       wrap.innerHTML = '<div class="field-warn visible">No ONVIF cameras responded. Check the camera is on this network (and that ONVIF is enabled on it), or add it manually below.</div>';
       return;
@@ -1869,26 +1919,49 @@ const OnvifUI = {
     this.render();
   },
 
+  // Credentials are never copied into JS state: they live only in the visible
+  // input fields (user-controlled) and are read at click time per call.
+  _creds(i) {
+    return {
+      user: document.getElementById(`onvifUser${i}`).value.trim(),
+      pass: document.getElementById(`onvifPass${i}`).value
+    };
+  },
+
   async connect(i) {
     const d = this.devices[i];
-    const user = document.getElementById(`onvifUser${i}`).value.trim();
-    const pass = document.getElementById(`onvifPass${i}`).value;
-    d.error = null;
-    d.connecting = true;
-    this.render();
+    const { user, pass } = this._creds(i);
+    const btn = document.getElementById(`onvifConnect${i}`);
+    const errEl = document.getElementById(`onvifErr${i}`);
+    btn.disabled = true;
+    btn.textContent = '…';
+    errEl.classList.remove('visible');
     const res = await dinghyNative.getCameraStreams({ address: d.address, port: d.port, username: user, password: pass });
-    d.connecting = false;
-    if (res.error) d.error = res.error;
-    else { d.info = res; d.creds = { user, pass }; }
-    this.render();
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+    if (res.error) {
+      errEl.textContent = res.error;
+      errEl.classList.add('visible');
+      return;
+    }
+    d.info = res;
+    // inject profiles into this device's row only — creds inputs stay untouched
+    document.getElementById(`onvifProfiles${i}`).innerHTML = `
+      <div class="item-type" style="margin-top:0.3rem">${esc(res.manufacturer || '')} ${esc(res.model || '')}</div>
+      ${res.profiles.map((p, pi) => `
+        <div style="display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem">
+          <span class="item-type" style="flex:1">${esc(p.name)}${p.width ? ` ${p.width}×${p.height}` : ''}${p.fps ? ` @${Math.round(p.fps)}fps` : ''}</span>
+          ${p.rtsp ? `<button class="btn btn-sm" onclick="OnvifUI.use(${i},${pi})">Use</button>` : '<span class="item-type">no RTSP</span>'}
+        </div>`).join('')}`;
   },
 
   use(di, pi) {
     const d = this.devices[di];
     const p = d.info.profiles[pi];
     if (!p.rtsp) return;
+    const { user, pass } = this._creds(di); // read live, not from storage
     document.getElementById('camName').value = this._slug(d.info.model || d.name || d.hardware);
-    document.getElementById('camInput').value = this._injectCreds(p.rtsp, d.creds.user, d.creds.pass);
+    document.getElementById('camInput').value = this._injectCreds(p.rtsp, user, pass);
     if (p.width) document.getElementById('camWidth').value = p.width;
     if (p.height) document.getElementById('camHeight').value = p.height;
     if (p.fps) document.getElementById('camFps').value = Math.round(p.fps);
@@ -1905,23 +1978,15 @@ const OnvifUI = {
       <div class="item" style="flex-direction:column;align-items:stretch;cursor:default">
         <div>
           <div class="item-name">${esc(d.name || d.hardware || 'ONVIF device')}</div>
-          <div class="item-type">${esc(d.address)}:${d.port}${d.hardware && d.name ? ' · ' + esc(d.hardware) : ''}</div>
+          <div class="item-type">${esc(d.address)}:${esc(d.port)}${d.hardware && d.name ? ' · ' + esc(d.hardware) : ''}</div>
         </div>
-        ${d.info ? `
-          <div class="item-type" style="margin-top:0.3rem">${esc(d.info.manufacturer || '')} ${esc(d.info.model || '')}</div>
-          ${d.info.profiles.map((p, pi) => `
-            <div style="display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem">
-              <span class="item-type" style="flex:1">${esc(p.name)}${p.width ? ` ${p.width}×${p.height}` : ''}${p.fps ? ` @${Math.round(p.fps)}fps` : ''}</span>
-              ${p.rtsp ? `<button class="btn btn-sm" onclick="OnvifUI.use(${i},${pi})">Use</button>` : '<span class="item-type">no RTSP</span>'}
-            </div>`).join('')}
-        ` : `
-          <div style="display:flex;gap:0.4rem;margin-top:0.4rem">
-            <input type="text" id="onvifUser${i}" placeholder="user" style="flex:1">
-            <input type="password" id="onvifPass${i}" placeholder="password" style="flex:1">
-            <button class="btn btn-sm" onclick="OnvifUI.connect(${i})" ${d.connecting ? 'disabled' : ''}>${d.connecting ? '…' : 'Connect'}</button>
-          </div>
-          ${d.error ? `<div class="field-error visible">${esc(d.error)}</div>` : ''}
-        `}
+        <div style="display:flex;gap:0.4rem;margin-top:0.4rem">
+          <input type="text" id="onvifUser${i}" placeholder="user" style="flex:1" autocomplete="off">
+          <input type="password" id="onvifPass${i}" placeholder="password" style="flex:1" autocomplete="off">
+          <button class="btn btn-sm" id="onvifConnect${i}" onclick="OnvifUI.connect(${i})">Connect</button>
+        </div>
+        <div class="field-error" id="onvifErr${i}"></div>
+        <div id="onvifProfiles${i}"></div>
       </div>`).join('');
   }
 };
@@ -1943,7 +2008,9 @@ Store.subscribe(ws => View.render(ws));
 Store.subscribe(ws => Persist.save(ws));
 
 // spec 04: restore persisted workspace (polygons/cameras/draft; images re-uploaded on prompt)
-const _saved = Persist.load();
+const _loaded = Persist.load();
+const _saved = _loaded.ws;
+if (_loaded.discarded) Toast.show('Stored workspace was unreadable and has been cleared.');
 if (_saved) {
   Store.state = _saved;
   document.getElementById('drawMode').value = _saved.draft.type || 'motion_mask';

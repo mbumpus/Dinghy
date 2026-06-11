@@ -45,7 +45,7 @@ npm run dist       # package installers (dmg / AppImage / exe via electron-build
 Built to be audited, since it configures a security system:
 - Zero network requests at runtime (web and desktop) — verify in DevTools
 - Renderer is one HTML file; the only third-party code in it is [js-yaml 4.1.0](https://github.com/nodeca/js-yaml) (MIT), vendored inline, used only to *parse* imported YAML
-- Electron shell: `contextIsolation` on, `nodeIntegration` off, sandboxed renderer; the entire native surface is four functions in [`src/preload.js`](src/preload.js)
+- Electron shell: `contextIsolation` on, `nodeIntegration` off, sandboxed renderer, strict CSP (no remote scripts, no network); the entire native surface is six functions in [`src/preload.js`](src/preload.js)
 - RTSP URLs are passed as process arguments (never shell-interpolated) and stripped of credentials in any error output
 
 ## Coordinate model
