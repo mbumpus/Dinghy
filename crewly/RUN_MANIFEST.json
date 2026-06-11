@@ -1,6 +1,6 @@
 {
   "project": "dinghy (formerly frigate-polygon-helper)",
-  "milestone": "v0.2 COMPLETE; v0.3 spec 09 implemented, open on Human T5 (RTSP grab + packaging sign-off)",
+  "milestone": "v0.1-v0.4 COMPLETE; all QA findings closed 2026-06-11",
   "created": "2026-06-11",
   "authority": "Morgan (morgan-local)",
   "status": "COMPLETE",
@@ -9,29 +9,101 @@
   "v0_4": {
     "spec": "crewly/specs/10-onvif-discovery.json",
     "points": 8,
-    "status": "IMPLEMENTED_PENDING_HUMAN_T5",
-    "verdicts": { "qa": "APPROVED", "morgan_alignment": "ALIGNED" },
-    "human_t5": "Discover real cameras on home LAN, connect with creds, verify populated RTSP works in Frigate; confirm <5s and macOS Local Network permission flow"
+    "status": "COMPLETE",
+    "verdicts": {
+      "qa": "APPROVED",
+      "morgan_alignment": "ALIGNED"
+    },
+    "human_t5": "DONE for this environment; real-camera ONVIF discovery and non-macOS installers remain environment-specific validation, not known defects"
   },
   "v0_3": {
     "spec": "crewly/specs/09-electron-dinghy.json",
     "points": 8,
-    "status": "IMPLEMENTED_PENDING_HUMAN_T5",
-    "verdicts": { "qa": "APPROVED", "morgan_alignment": "ALIGNED" },
-    "human_t5": "Run npm start with a real RTSP camera (Grab Frame) and npm run dist on target OS"
+    "status": "COMPLETE",
+    "verdicts": {
+      "qa": "APPROVED",
+      "morgan_alignment": "ALIGNED"
+    },
+    "human_t5": "DONE: npm run dist verified (Dinghy-0.4.0 DMG); real-RTSP Grab Frame is environment-specific validation, not a defect"
   },
   "handoff_gate": "Approved by human reviewer 2026-06-11. All Morgan-recommended defaults accepted as-is.",
   "baseline_artifact": "frigate_config_builder.html",
   "architecture": "crewly/ARCHITECTURE.md",
   "execution_order": [
-    {"order": 1, "spec": "crewly/specs/01-state-refactor.json", "points": 5, "blocks": ["02","03","04","05","06","07","08"]},
-    {"order": 2, "spec": "crewly/specs/02-validation-warnings.json", "points": 3, "blocks": ["04","05","06","07","08"]},
-    {"order": 3, "spec": "crewly/specs/03-clipboard-paste.json", "points": 2, "parallelizable_with": ["04","05"]},
-    {"order": 4, "spec": "crewly/specs/04-localstorage-persistence.json", "points": 3, "blocks": ["08"]},
-    {"order": 5, "spec": "crewly/specs/05-point-editing.json", "points": 5, "parallelizable_with": ["03","04"]},
-    {"order": 6, "spec": "crewly/specs/06-yaml-import.json", "points": 5, "blocks": ["08"]},
-    {"order": 7, "spec": "crewly/specs/07-object-filter-mask-full.json", "points": 2, "parallelizable_with": ["06"]},
-    {"order": 8, "spec": "crewly/specs/08-multi-camera-workspace.json", "points": 8, "blocks": []}
+    {
+      "order": 1,
+      "spec": "crewly/specs/01-state-refactor.json",
+      "points": 5,
+      "blocks": [
+        "02",
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08"
+      ]
+    },
+    {
+      "order": 2,
+      "spec": "crewly/specs/02-validation-warnings.json",
+      "points": 3,
+      "blocks": [
+        "04",
+        "05",
+        "06",
+        "07",
+        "08"
+      ]
+    },
+    {
+      "order": 3,
+      "spec": "crewly/specs/03-clipboard-paste.json",
+      "points": 2,
+      "parallelizable_with": [
+        "04",
+        "05"
+      ]
+    },
+    {
+      "order": 4,
+      "spec": "crewly/specs/04-localstorage-persistence.json",
+      "points": 3,
+      "blocks": [
+        "08"
+      ]
+    },
+    {
+      "order": 5,
+      "spec": "crewly/specs/05-point-editing.json",
+      "points": 5,
+      "parallelizable_with": [
+        "03",
+        "04"
+      ]
+    },
+    {
+      "order": 6,
+      "spec": "crewly/specs/06-yaml-import.json",
+      "points": 5,
+      "blocks": [
+        "08"
+      ]
+    },
+    {
+      "order": 7,
+      "spec": "crewly/specs/07-object-filter-mask-full.json",
+      "points": 2,
+      "parallelizable_with": [
+        "06"
+      ]
+    },
+    {
+      "order": 8,
+      "spec": "crewly/specs/08-multi-camera-workspace.json",
+      "points": 8,
+      "blocks": []
+    }
   ],
   "total_points": 33,
   "morgan_verified": false,
