@@ -62,13 +62,13 @@ Origin top-left; coordinates normalized (`x / width`, `y / height`), emitted to 
 | v0.4 | **shipped** | ONVIF camera discovery on the local network |
 | v0.5 | future | Community camera-URL database, Frigate version presets |
 
-Specs, architecture decisions, and the build audit trail live in [`crewly/`](crewly/).
+Built spec-first: each milestone was implemented against contract-grade specs with QA validation and an audit trail (maintained locally, not published).
 
 ## Development
 
 No build step for the renderer: edit `dinghy.html`, refresh. The script is organized into plain-object namespaces — `Store` (state + actions), `View`, `Yaml`, `Validate`, `Persist`, `Platform`, `Importer` — with one rule: UI handlers call `Store` actions only; rendering, YAML, and persistence react via `Store.subscribe`. Native capability enters exclusively through the `window.dinghyNative` bridge and is guarded everywhere, so the same file runs in a plain browser.
 
-Main process: [`src/main.js`](src/main.js) (window, menu, config I/O, ffmpeg spawn). Preview server for browser testing: `node .claude/serve.js` → http://localhost:8741.
+Main process: [`src/main.js`](src/main.js) (window, menu, config I/O, ffmpeg spawn). For browser testing, any static file server works (or just open `dinghy.html` directly).
 
 ## License
 

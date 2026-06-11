@@ -26,7 +26,7 @@
 - Electron 42.4.0; `npm audit` reports zero vulnerabilities
 - Sandboxed renderer with `contextIsolation`; the entire native surface is six functions in `src/preload.js`
 - All imported YAML values escaped and type-coerced before rendering (XSS fixed); RTSP/ONVIF credentials are never stored in app state and are stripped from all error output
-- 16 findings from an independent external QA pass fixed and verified, including cross-camera undo integrity and persistence-clearing correctness (full registry: `crewly/bugs.yaml`)
+- 16 findings from an independent external QA pass fixed and verified, including cross-camera undo integrity and persistence-clearing correctness
 
 ## Verification status
 - **macOS build verified** (Dinghy-0.4.0 DMG)
